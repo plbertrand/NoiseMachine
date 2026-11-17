@@ -1,19 +1,25 @@
-"""Tests for serve_noise.py. Run with: python3 -m unittest"""
+"""Tests for serve_noise.py. Run with: python3 -m unittest
+
+Every server here listens on 127.0.0.1 only, so nothing on the network can
+reach one while the tests run.
+"""
 
 import http.client
 import itertools
+import socket
 import subprocess
 import sys
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pyflac  # type: ignore[import-untyped]
 
 from noise import GENERATORS, SAMPLE_RATE, BrownNoise, Samples
-from serve_noise import NoiseHandler, flac_stream, lan_address
+from serve_noise import NoiseHandler, argument_parser, flac_stream, url_host
 
 SCRIPT = Path(__file__).with_name("serve_noise.py")
 
@@ -125,10 +131,10 @@ class ServerTest(unittest.TestCase):
 
 
 class CliTest(unittest.TestCase):
-    def start(self, *args: str) -> list[str]:
-        """Start serve_noise.py on a free port; what it prints before serving."""
+    def start(self) -> list[str]:
+        """Start serve_noise.py on a free local port; what it prints before serving."""
         process = subprocess.Popen(
-            [sys.executable, str(SCRIPT), "--port", "0", *args],
+            [sys.executable, str(SCRIPT), "--bind", "127.0.0.1", "--port", "0"],
             stderr=subprocess.PIPE,
             text=True,
         )
@@ -139,34 +145,52 @@ class CliTest(unittest.TestCase):
         return [process.stderr.readline().strip() for _ in range(1 + len(GENERATORS))]
 
     def test_says_where_it_listens_then_lists_the_streams(self) -> None:
-        listening, *urls = self.start("--bind", "127.0.0.1")
+        listening, *urls = self.start()
         self.assertRegex(listening, r"^Listening on 127\.0\.0\.1:\d+$")
         port = listening.rsplit(":", 1)[1]
         self.assertEqual(urls, [f"http://127.0.0.1:{port}/{color}.flac" for color in GENERATORS])
 
     def test_serves_on_the_address_it_printed(self) -> None:
-        _, url, *_ = self.start("--bind", "127.0.0.1")
+        _, url, *_ = self.start()
         host, port = url.split("/")[2].split(":")
         connection = http.client.HTTPConnection(host, int(port), timeout=10)
         self.addCleanup(connection.close)
         connection.request("GET", "/" + url.split("/", 3)[3])
         self.assertEqual(connection.getresponse().read(4), b"fLaC")
 
-    def test_listens_on_every_address_by_default(self) -> None:
-        listening, url, *_ = self.start()
-        self.assertRegex(listening, r"^Listening on 0\.0\.0\.0:\d+$")
-        self.assertTrue(url.startswith(f"http://{lan_address()}:"), url)
-
-    def test_an_address_it_cannot_listen_on_is_a_usage_error(self) -> None:
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--bind", "192.0.2.1"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+    def test_a_port_it_cannot_listen_on_is_a_usage_error(self) -> None:
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--bind", "127.0.0.1", "--port", str(port)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("cannot listen on 192.0.2.1:8000", result.stderr)
+        self.assertIn(f"cannot listen on 127.0.0.1:{port}", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+
+class ArgumentsTest(unittest.TestCase):
+    """The defaults, checked without starting a server on them."""
+
+    def test_listens_on_every_address_by_default(self) -> None:
+        self.assertEqual(argument_parser().parse_args([]).bind, "0.0.0.0")
+
+    def test_default_port(self) -> None:
+        self.assertEqual(argument_parser().parse_args([]).port, 8000)
+
+    def test_urls_use_the_lan_address_when_listening_on_every_address(self) -> None:
+        with mock.patch("serve_noise.lan_address", return_value="192.168.1.10"):
+            self.assertEqual(url_host("0.0.0.0"), "192.168.1.10")
+
+    def test_urls_use_the_address_listened_on_otherwise(self) -> None:
+        with mock.patch("serve_noise.lan_address") as lan_address:
+            self.assertEqual(url_host("127.0.0.1"), "127.0.0.1")
+        lan_address.assert_not_called()
 
 
 if __name__ == "__main__":

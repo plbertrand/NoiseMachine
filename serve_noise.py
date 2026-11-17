@@ -96,7 +96,12 @@ def lan_address() -> str:
             return "127.0.0.1"
 
 
-def main() -> int:
+def url_host(bind: str) -> str:
+    """The host to print in the stream URLs of a server listening on bind."""
+    return lan_address() if bind == EVERY_ADDRESS else bind
+
+
+def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve endless noise as FLAC over HTTP.")
     parser.add_argument(
         "--bind",
@@ -105,6 +110,11 @@ def main() -> int:
         help="address to listen on (default: %(default)s, every address of this host)",
     )
     parser.add_argument("--port", type=int, default=8000, help="default: %(default)s")
+    return parser
+
+
+def main() -> int:
+    parser = argument_parser()
     args = parser.parse_args()
 
     try:
@@ -114,9 +124,8 @@ def main() -> int:
     with server:
         port = server.server_port
         print(f"Listening on {args.bind}:{port}", file=sys.stderr)
-        host = lan_address() if args.bind == EVERY_ADDRESS else args.bind
         for path in STREAMS:
-            print(f"http://{host}:{port}{path}", file=sys.stderr)
+            print(f"http://{url_host(args.bind)}:{port}{path}", file=sys.stderr)
         sys.stderr.flush()
         try:
             server.serve_forever()
