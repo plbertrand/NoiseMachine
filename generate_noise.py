@@ -11,12 +11,11 @@ import struct
 import sys
 from typing import BinaryIO
 
-SAMPLE_RATE = 44100  # frames per second
-SAMPLE_WIDTH = 2  # bytes per sample, 16-bit signed
-CHANNELS = 1
-CHUNK_FRAMES = SAMPLE_RATE  # one second at a time, so memory stays flat
+import numpy as np
 
-COLORS = ("white", "brown")
+from noise import CHANNELS, GENERATORS, SAMPLE_RATE, SAMPLE_WIDTH, Noise
+
+CHUNK_FRAMES = SAMPLE_RATE  # one second at a time, so memory stays flat
 
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
 
@@ -32,14 +31,6 @@ def parse_duration(text: str) -> float:
     if seconds <= 0:
         raise argparse.ArgumentTypeError("duration must be greater than zero")
     return seconds
-
-
-def generate(color: str, n_frames: int) -> bytes:
-    """Return n_frames of 16-bit mono PCM for the given noise color.
-
-    Stub: returns silence whatever the color.
-    """
-    return bytes(n_frames * SAMPLE_WIDTH * CHANNELS)
 
 
 def wav_header(total_frames: int) -> bytes:
@@ -61,12 +52,12 @@ def wav_header(total_frames: int) -> bytes:
     )
 
 
-def write_wav(out: BinaryIO, color: str, total_frames: int) -> None:
+def write_wav(out: BinaryIO, noise: Noise, total_frames: int) -> None:
     out.write(wav_header(total_frames))
     remaining = total_frames
     while remaining > 0:
         n_frames = min(CHUNK_FRAMES, remaining)
-        out.write(generate(color, n_frames))
+        out.write(noise.read(n_frames))
         remaining -= n_frames
     out.flush()
 
@@ -81,17 +72,23 @@ def main() -> int:
     )
     parser.add_argument(
         "--color",
-        choices=COLORS,
+        choices=sorted(GENERATORS),
         default="brown",
         help="kind of noise (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="seed for the random generator, for reproducible output",
     )
     args = parser.parse_args()
 
     if sys.stdout.isatty():
         parser.error("refusing to write WAV data to a terminal; redirect stdout to a file or pipe")
 
+    noise = GENERATORS[args.color](np.random.default_rng(args.seed))
     try:
-        write_wav(sys.stdout.buffer, args.color, round(args.duration * SAMPLE_RATE))
+        write_wav(sys.stdout.buffer, noise, round(args.duration * SAMPLE_RATE))
     except ValueError as error:
         parser.error(str(error))
     except BrokenPipeError:

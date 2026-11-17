@@ -10,7 +10,10 @@ import unittest
 import wave
 from pathlib import Path
 
+import numpy as np
+
 import generate_noise as gn
+from noise import CHANNELS, GENERATORS, SAMPLE_RATE, SAMPLE_WIDTH, BrownNoise
 
 SCRIPT = Path(__file__).with_name("generate_noise.py")
 
@@ -54,15 +57,15 @@ class WavHeaderTest(unittest.TestCase):
         self.assertEqual(len(gn.wav_header(0)), 44)
 
     def test_describes_the_format(self) -> None:
-        params, frames = read_wav(gn.wav_header(3) + bytes(3 * gn.SAMPLE_WIDTH))
-        self.assertEqual(params.nchannels, gn.CHANNELS)
-        self.assertEqual(params.sampwidth, gn.SAMPLE_WIDTH)
-        self.assertEqual(params.framerate, gn.SAMPLE_RATE)
+        params, frames = read_wav(gn.wav_header(3) + bytes(3 * SAMPLE_WIDTH))
+        self.assertEqual(params.nchannels, CHANNELS)
+        self.assertEqual(params.sampwidth, SAMPLE_WIDTH)
+        self.assertEqual(params.framerate, SAMPLE_RATE)
         self.assertEqual(params.nframes, 3)
-        self.assertEqual(len(frames), 3 * gn.SAMPLE_WIDTH)
+        self.assertEqual(len(frames), 3 * SAMPLE_WIDTH)
 
     def test_longest_that_fits(self) -> None:
-        frame_size = gn.CHANNELS * gn.SAMPLE_WIDTH
+        frame_size = CHANNELS * SAMPLE_WIDTH
         longest = (0xFFFFFFFF - 36) // frame_size
         gn.wav_header(longest)
         with self.assertRaises(ValueError):
@@ -72,7 +75,7 @@ class WavHeaderTest(unittest.TestCase):
 class WriteWavTest(unittest.TestCase):
     def write(self, total_frames: int) -> bytes:
         out = io.BytesIO()
-        gn.write_wav(out, "brown", total_frames)
+        gn.write_wav(out, BrownNoise(np.random.default_rng(0)), total_frames)
         return out.getvalue()
 
     def test_frame_counts(self) -> None:
@@ -83,15 +86,8 @@ class WriteWavTest(unittest.TestCase):
                 data = self.write(total)
                 params, frames = read_wav(data)
                 self.assertEqual(params.nframes, total)
-                self.assertEqual(len(frames), total * gn.SAMPLE_WIDTH)
-                self.assertEqual(len(data), 44 + total * gn.SAMPLE_WIDTH)
-
-
-class GenerateTest(unittest.TestCase):
-    def test_stub_is_silence_of_the_right_length(self) -> None:
-        for color in gn.COLORS:
-            with self.subTest(color=color):
-                self.assertEqual(gn.generate(color, 100), bytes(100 * gn.SAMPLE_WIDTH))
+                self.assertEqual(len(frames), total * SAMPLE_WIDTH)
+                self.assertEqual(len(data), 44 + total * SAMPLE_WIDTH)
 
 
 class CliTest(unittest.TestCase):
@@ -99,19 +95,30 @@ class CliTest(unittest.TestCase):
         result = run_cli("--duration", "2s")
         self.assertEqual(result.returncode, 0, result.stderr)
         params, _ = read_wav(result.stdout)
-        self.assertEqual(params.nframes, 2 * gn.SAMPLE_RATE)
-        self.assertEqual(params.framerate, gn.SAMPLE_RATE)
+        self.assertEqual(params.nframes, 2 * SAMPLE_RATE)
+        self.assertEqual(params.framerate, SAMPLE_RATE)
 
     def test_fractional_duration(self) -> None:
         result = run_cli("--duration", "0.5")
         params, _ = read_wav(result.stdout)
-        self.assertEqual(params.nframes, gn.SAMPLE_RATE // 2)
+        self.assertEqual(params.nframes, SAMPLE_RATE // 2)
 
     def test_every_color_is_accepted(self) -> None:
-        for color in gn.COLORS:
+        for color in GENERATORS:
             with self.subTest(color=color):
                 result = run_cli("--duration", "1s", "--color", color)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                _, frames = read_wav(result.stdout)
+                self.assertTrue(any(frames), "silence")
+
+    def test_seed_makes_the_output_reproducible(self) -> None:
+        first = run_cli("--duration", "1s", "--seed", "1").stdout
+        self.assertEqual(run_cli("--duration", "1s", "--seed", "1").stdout, first)
+        self.assertNotEqual(run_cli("--duration", "1s", "--seed", "2").stdout, first)
+
+    def test_unseeded_runs_differ(self) -> None:
+        first = run_cli("--duration", "1s").stdout
+        self.assertNotEqual(run_cli("--duration", "1s").stdout, first)
 
     def test_usage_errors(self) -> None:
         cases = {
