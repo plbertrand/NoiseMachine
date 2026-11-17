@@ -58,11 +58,25 @@ class MainTest(unittest.TestCase):
     def test_queues_every_stream_in_order_after_clearing(self, soco: mock.Mock) -> None:
         run("192.168.1.50", URL)
         coordinator = soco.SoCo.return_value.group.coordinator
-        queued = [mock.call(f"{SERVER}{path}", mime_type="audio/flac") for path in STREAMS]
+        self.assertEqual(coordinator.mock_calls[0], mock.call.clear_queue())
+        queued = [call.args[0] for call in coordinator.add_to_queue.call_args_list]
         self.assertEqual(
-            coordinator.mock_calls[:1] + coordinator.add_uri_to_queue.mock_calls,
-            [mock.call.clear_queue()] + queued,
+            [item.resources[0].uri for item in queued], [SERVER + path for path in STREAMS]
         )
+        for item in queued:
+            self.assertEqual(item.resources[0].protocol_info, "http-get:*:audio/flac:*")
+
+    def test_queued_streams_have_a_title_and_an_artist(self, soco: mock.Mock) -> None:
+        run("192.168.1.50", URL)
+        coordinator = soco.SoCo.return_value.group.coordinator
+        queued = [call.args[0] for call in coordinator.add_to_queue.call_args_list]
+        self.assertEqual(
+            [item.title for item in queued],
+            ["White Noise", "Pink Noise", "Brown Noise", "Deep Brown Noise"],
+        )
+        self.assertEqual({item.creator for item in queued}, {"PLB's Noise Machine"})
+        # Without an album, even an empty one, the speaker shows the file name.
+        self.assertEqual({item.album for item in queued}, {""})
 
     def test_starts_on_the_stream_given(self, soco: mock.Mock) -> None:
         for index, path in enumerate(STREAMS):

@@ -22,9 +22,14 @@ from noise import GENERATORS, SAMPLE_RATE, Noise
 CHUNK_FRAMES = SAMPLE_RATE  # noise is generated a second at a time
 EVERY_ADDRESS = "0.0.0.0"
 
-# The path each stream is served at, e.g. /brown.flac.
+
+def stream_path(color: str) -> str:
+    """The path a color is served at, e.g. /brown.flac."""
+    return f"/{color}.flac"
+
+
 STREAMS: dict[str, type[Noise]] = {
-    f"/{color}.flac": generator for color, generator in GENERATORS.items()
+    stream_path(color): generator for color, generator in GENERATORS.items()
 }
 
 
