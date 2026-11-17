@@ -5,7 +5,8 @@
 
 The speaker's queue is replaced with every color the server has, and it
 starts on the one given. Next and Previous, on the speaker or in the Sonos
-app, then change color. The app shows each as e.g. "Brown Noise".
+app, then change color. The app shows each as e.g. "Brown Noise", with a
+cover image.
 
 The speaker is its IP address or its room name, e.g. "Bedroom". If it is in a
 group or a stereo pair, the whole group plays.
@@ -24,7 +25,7 @@ from soco.data_structures import (  # type: ignore[import-untyped]
 )
 
 from noise import GENERATORS
-from streams import STREAMS, stream_path
+from streams import STREAMS, cover_path, stream_path
 
 ARTIST = "PLB's Noise Machine"
 
@@ -49,8 +50,9 @@ def title(color: str) -> str:
     return f"{color.replace('-', ' ').title()} Noise"
 
 
-def track(color: str, url: str) -> Any:
-    """A queue item for the stream of that color at url, with a title and an artist.
+def track(color: str, url: str, cover_url: str) -> Any:
+    """A queue item for the stream of that color at url, with a title, an artist
+    and a cover image.
 
     The album has to be there, even empty: given a title with no artist or
     no album, the speaker drops them all and shows the file name.
@@ -59,6 +61,7 @@ def track(color: str, url: str) -> Any:
         title=title(color),
         creator=ARTIST,
         album="",
+        album_art_uri=cover_url,
         parent_id="",
         item_id="",
         resources=[DidlResource(uri=url, protocol_info="http-get:*:audio/flac:*")],
@@ -76,7 +79,8 @@ def queue_streams(coordinator: Any, url: str) -> None:
     coordinator.clear_queue()
     for color in colors:
         stream = server._replace(path=stream_path(color)).geturl()
-        coordinator.add_to_queue(track(color, stream))
+        cover = server._replace(path=cover_path(color)).geturl()
+        coordinator.add_to_queue(track(color, stream, cover))
     coordinator.play_from_queue([stream_path(color) for color in colors].index(server.path))
     coordinator.play_mode = "REPEAT_ALL"
 

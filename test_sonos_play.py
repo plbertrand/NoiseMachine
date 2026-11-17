@@ -75,6 +75,10 @@ class MainTest(unittest.TestCase):
             ["White Noise", "Pink Noise", "Brown Noise", "Deep Brown Noise"],
         )
         self.assertEqual({item.creator for item in queued}, {"PLB's Noise Machine"})
+        self.assertEqual(
+            [item.album_art_uri for item in queued],
+            [f"{SERVER}/{color}.png" for color in ("white", "pink", "brown", "deep-brown")],
+        )
         # Without an album, even an empty one, the speaker shows the file name.
         self.assertEqual({item.album for item in queued}, {""})
 
