@@ -3,7 +3,8 @@
 
     serve_noise.py --port 8000
 
-Each color is a stream that never ends, e.g. http://<this host>:8000/brown.flac
+Each color is a stream that never ends, e.g. http://<this host>:8000/brown.flac,
+with a cover image beside it at /brown.png.
 
 A Sonos speaker can also be told over HTTP to play them: see control.py.
 """
@@ -21,8 +22,9 @@ import numpy as np
 import pyflac  # type: ignore[import-untyped]
 
 import control
+import cover
 from noise import SAMPLE_RATE, Noise
-from streams import STREAMS
+from streams import COVERS, STREAMS
 
 CHUNK_FRAMES = SAMPLE_RATE  # noise is generated a second at a time
 EVERY_ADDRESS = "0.0.0.0"
@@ -50,7 +52,8 @@ def flac_stream(noise: Noise) -> Iterator[bytes]:
 class NoiseHandler(BaseHTTPRequestHandler):
     """GET /<color>.flac streams that color until the listener hangs up.
 
-    The routes of control.py tell a Sonos speaker to play these streams.
+    GET /<color>.png is its cover image. The routes of control.py tell a Sonos
+    speaker to play these streams.
     """
 
     def do_GET(self) -> None:
@@ -84,12 +87,25 @@ class NoiseHandler(BaseHTTPRequestHandler):
         return True
 
     def _respond(self, with_body: bool) -> None:
-        generator = STREAMS.get(urlsplit(self.path).path)
-        if generator is None:
+        path = urlsplit(self.path).path
+        if path in STREAMS:
+            self._stream(STREAMS[path], with_body)
+        elif path in COVERS:
+            self._image(cover.cover(COVERS[path]), with_body)
+        else:
             self.send_error(
                 HTTPStatus.NOT_FOUND, explain=f"The streams are {', '.join(STREAMS)}"
             )
-            return
+
+    def _image(self, image: bytes, with_body: bool) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(image)))
+        self.end_headers()
+        if with_body:
+            self.wfile.write(image)
+
+    def _stream(self, generator: type[Noise], with_body: bool) -> None:
         # No Content-Length: the body ends when the connection does.
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "audio/flac")
