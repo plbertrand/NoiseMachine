@@ -19,6 +19,7 @@ from unittest import mock
 import numpy as np
 import pyflac  # type: ignore[import-untyped]
 
+from cover import cover
 from noise import GENERATORS, SAMPLE_RATE, BrownNoise, Samples
 from serve_noise import (
     NoiseHandler,
@@ -115,6 +116,22 @@ class ServerTest(ServerCase):
                 self.assertEqual(sample_rate, SAMPLE_RATE)
                 self.assertGreater(decoded.std(), 0, "silence")
 
+    def test_every_color_has_a_cover_image(self) -> None:
+        for color in GENERATORS:
+            with self.subTest(color=color):
+                response = self.request("GET", f"/{color}.png")
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.getheader("Content-Type"), "image/png")
+                body = response.read()
+                self.assertEqual(response.getheader("Content-Length"), str(len(body)))
+                self.assertEqual(body, cover(color))
+
+    def test_head_of_a_cover_has_its_length_and_no_body(self) -> None:
+        response = self.request("HEAD", "/brown.png")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Length"), str(len(cover("brown"))))
+        self.assertEqual(response.read(), b"")
+
     def test_two_listeners_get_different_noise(self) -> None:
         first = self.request("GET", "/white.flac").read(100_000)
         second = self.request("GET", "/white.flac").read(100_000)
@@ -132,7 +149,8 @@ class ServerTest(ServerCase):
         self.assertEqual(response.read(4), b"fLaC")
 
     def test_unknown_paths_are_not_found(self) -> None:
-        paths = ("/", "/purple.flac", "/brown", "/brown.mp3", "/x/brown.flac", "/.flac")
+        paths = ["/", "/purple.flac", "/brown", "/brown.mp3", "/x/brown.flac", "/.flac"]
+        paths += ["/purple.png", "/.png", "/brown.jpg"]
         for path in paths:
             with self.subTest(path=path):
                 self.assertEqual(self.request("GET", path).status, 404)
