@@ -72,7 +72,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--color",
-        choices=sorted(GENERATORS),
+        choices=list(GENERATORS),
         default="brown",
         help="kind of noise (default: %(default)s)",
     )
