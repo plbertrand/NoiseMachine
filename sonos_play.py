@@ -5,7 +5,7 @@
 
 The speaker's queue is replaced with every color the server has, and it
 starts on the one given. Next and Previous, on the speaker or in the Sonos
-app, then change color.
+app, then change color. The app shows each as e.g. "Brown Noise".
 
 The speaker is its IP address or its room name, e.g. "Bedroom". If it is in a
 group or a stereo pair, the whole group plays.
@@ -18,8 +18,15 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import soco  # type: ignore[import-untyped]
+from soco.data_structures import (  # type: ignore[import-untyped]
+    DidlMusicTrack,
+    DidlResource,
+)
 
-from serve_noise import STREAMS
+from noise import GENERATORS
+from serve_noise import STREAMS, stream_path
+
+ARTIST = "PLB's Noise Machine"
 
 
 def is_ip_address(text: str) -> bool:
@@ -37,6 +44,27 @@ def find_speaker(speaker: str) -> Any | None:
     return soco.discovery.by_name(speaker)
 
 
+def title(color: str) -> str:
+    """What the Sonos app shows for a color: 'deep-brown' is 'Deep Brown Noise'."""
+    return f"{color.replace('-', ' ').title()} Noise"
+
+
+def track(color: str, url: str) -> Any:
+    """A queue item for the stream of that color at url, with a title and an artist.
+
+    The album has to be there, even empty: given a title with no artist or
+    no album, the speaker drops them all and shows the file name.
+    """
+    return DidlMusicTrack(
+        title=title(color),
+        creator=ARTIST,
+        album="",
+        parent_id="",
+        item_id="",
+        resources=[DidlResource(uri=url, protocol_info="http-get:*:audio/flac:*")],
+    )
+
+
 def queue_streams(coordinator: Any, url: str) -> None:
     """Replace the queue with every stream of the server at url, and play url.
 
@@ -44,11 +72,12 @@ def queue_streams(coordinator: Any, url: str) -> None:
     repeats, so skipping past the last color comes round to the first.
     """
     server = urlsplit(url)
-    paths = list(STREAMS)
+    colors = list(GENERATORS)
     coordinator.clear_queue()
-    for path in paths:
-        coordinator.add_uri_to_queue(server._replace(path=path).geturl(), mime_type="audio/flac")
-    coordinator.play_from_queue(paths.index(server.path))
+    for color in colors:
+        stream = server._replace(path=stream_path(color)).geturl()
+        coordinator.add_to_queue(track(color, stream))
+    coordinator.play_from_queue([stream_path(color) for color in colors].index(server.path))
     coordinator.play_mode = "REPEAT_ALL"
 
 
