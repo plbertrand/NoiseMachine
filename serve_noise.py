@@ -4,9 +4,12 @@
     serve_noise.py --port 8000
 
 Each color is a stream that never ends, e.g. http://<this host>:8000/brown.flac
+
+A Sonos speaker can also be told over HTTP to play them: see control.py.
 """
 
 import argparse
+import json
 import socket
 import sys
 from collections.abc import Iterator
@@ -17,6 +20,7 @@ from urllib.parse import urlsplit
 import numpy as np
 import pyflac  # type: ignore[import-untyped]
 
+import control
 from noise import SAMPLE_RATE, Noise
 from streams import STREAMS
 
@@ -44,13 +48,40 @@ def flac_stream(noise: Noise) -> Iterator[bytes]:
 
 
 class NoiseHandler(BaseHTTPRequestHandler):
-    """GET /<color>.flac streams that color until the listener hangs up."""
+    """GET /<color>.flac streams that color until the listener hangs up.
+
+    The routes of control.py tell a Sonos speaker to play these streams.
+    """
 
     def do_GET(self) -> None:
-        self._respond(with_body=True)
+        if not self._control("GET"):
+            self._respond(with_body=True)
 
     def do_HEAD(self) -> None:
         self._respond(with_body=False)
+
+    def do_POST(self) -> None:
+        if not self._control("POST"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def _control(self, method: str) -> bool:
+        """Answer a request to control a speaker; False if it is not one."""
+        address = self.server.server_address
+        assert isinstance(address, tuple)  # of an internet socket: (host, port)
+        streams_url = server_url(str(address[0]), int(address[1]))
+        reply = control.control(streams_url, method, self.path)
+        if reply is None:
+            return False
+        body = json.dumps(reply.content).encode() + b"\n"
+        self.send_response(reply.code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if reply.allow:
+            self.send_header("Allow", reply.allow)
+        self.end_headers()
+        self.wfile.write(body)
+        return True
 
     def _respond(self, with_body: bool) -> None:
         generator = STREAMS.get(urlsplit(self.path).path)
@@ -97,6 +128,11 @@ def url_host(bind: str) -> str:
     return lan_address() if bind == EVERY_ADDRESS else bind
 
 
+def server_url(bind: str, port: int) -> str:
+    """Where a speaker finds a server listening on bind and port."""
+    return f"http://{url_host(bind)}:{port}"
+
+
 def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve endless noise as FLAC over HTTP.")
     parser.add_argument(
@@ -121,7 +157,11 @@ def main() -> int:
         port = server.server_port
         print(f"Listening on {args.bind}:{port}", file=sys.stderr)
         for path in STREAMS:
-            print(f"http://{url_host(args.bind)}:{port}{path}", file=sys.stderr)
+            print(f"{server_url(args.bind, port)}{path}", file=sys.stderr)
+        print("To control a Sonos speaker, by IP address or room name:", file=sys.stderr)
+        for path, (method, _) in control.ROUTES.items():
+            url = f"{server_url(args.bind, port)}{path}?{control.SPEAKER}=<speaker>"
+            print(f"{method} {url}", file=sys.stderr)
         sys.stderr.flush()
         try:
             server.serve_forever()
