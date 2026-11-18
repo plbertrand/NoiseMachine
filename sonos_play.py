@@ -24,7 +24,7 @@ from soco.data_structures import (  # type: ignore[import-untyped]
 )
 
 from noise import GENERATORS
-from serve_noise import STREAMS, stream_path
+from streams import STREAMS, stream_path
 
 ARTIST = "PLB's Noise Machine"
 
