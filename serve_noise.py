@@ -17,20 +17,11 @@ from urllib.parse import urlsplit
 import numpy as np
 import pyflac  # type: ignore[import-untyped]
 
-from noise import GENERATORS, SAMPLE_RATE, Noise
+from noise import SAMPLE_RATE, Noise
+from streams import STREAMS
 
 CHUNK_FRAMES = SAMPLE_RATE  # noise is generated a second at a time
 EVERY_ADDRESS = "0.0.0.0"
-
-
-def stream_path(color: str) -> str:
-    """The path a color is served at, e.g. /brown.flac."""
-    return f"/{color}.flac"
-
-
-STREAMS: dict[str, type[Noise]] = {
-    stream_path(color): generator for color, generator in GENERATORS.items()
-}
 
 
 def flac_stream(noise: Noise) -> Iterator[bytes]:

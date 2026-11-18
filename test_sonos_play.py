@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 import sonos_play
-from serve_noise import STREAMS
+from streams import STREAMS
 
 URL = "http://192.168.1.10:8000/deep-brown.flac"
 
