@@ -6,6 +6,7 @@ reach one while the tests run.
 
 import http.client
 import itertools
+import json
 import socket
 import subprocess
 import sys
@@ -76,9 +77,13 @@ class QuietHandler(NoiseHandler):
         pass  # keep the request log out of the test output
 
 
-class ServerTest(unittest.TestCase):
+class ServerCase(unittest.TestCase):
+    """A server on a free local port, answering with handler."""
+
+    handler: type[NoiseHandler] = QuietHandler
+
     def setUp(self) -> None:
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.handler)
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -90,6 +95,8 @@ class ServerTest(unittest.TestCase):
         connection.request(method, path)
         return connection.getresponse()
 
+
+class ServerTest(ServerCase):
     def test_every_color_streams_flac(self) -> None:
         for color in GENERATORS:
             with self.subTest(color=color):
@@ -129,9 +136,63 @@ class ServerTest(unittest.TestCase):
         response.close()
         self.assertEqual(self.request("GET", "/brown.flac").read(4), b"fLaC")
 
+    def test_a_control_route_without_a_speaker_is_a_bad_request(self) -> None:
+        for method, path in (("GET", "/api/status"), ("POST", "/api/stop")):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(method, path).status, 400)
+
+    def test_a_stream_is_not_posted_to(self) -> None:
+        self.assertEqual(self.request("POST", "/brown.flac").status, 404)
+
+
+class SpeakerTest(ServerCase):
+    """The control routes, with a mock for the speaker."""
+
+    def setUp(self) -> None:
+        patcher = mock.patch("control.Machine", autospec=True)
+        self.machines = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.machine = self.machines.return_value
+        self.machine.status.return_value = {"playing": "brown", "position": "0:01:02"}
+        self.machine.stop.return_value = {"playing": None}
+        super().setUp()
+
+    def test_the_speaker_is_sent_to_the_address_the_server_listens_on(self) -> None:
+        self.request("GET", "/api/status?speaker=Living%20Room").read()
+        self.machines.assert_called_once_with(
+            "Living Room", f"http://127.0.0.1:{self.server.server_port}"
+        )
+
+    def test_status_is_json(self) -> None:
+        response = self.request("GET", "/api/status?speaker=Bedroom")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("Content-Type"), "application/json")
+        self.assertEqual(json.loads(response.read()), {"playing": "brown", "position": "0:01:02"})
+
+    def test_a_post_reaches_the_speaker(self) -> None:
+        response = self.request("POST", "/api/stop?speaker=Bedroom")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.read()), {"playing": None})
+        self.machine.stop.assert_called_once_with()
+
+    def test_a_get_does_not_and_says_to_post(self) -> None:
+        response = self.request("GET", "/api/play/brown?speaker=Bedroom")
+        self.assertEqual(response.status, 405)
+        self.assertEqual(response.getheader("Allow"), "POST")
+        self.machine.play.assert_not_called()
+
+    def test_a_speaker_that_fails_is_a_bad_gateway(self) -> None:
+        self.machine.stop.side_effect = OSError(65, "No route to host")
+        response = self.request("POST", "/api/stop?speaker=Bedroom")
+        self.assertEqual(response.status, 502)
+        self.assertIn("No route to host", json.loads(response.read())["error"])
+
+    def test_the_streams_are_still_served(self) -> None:
+        self.assertEqual(self.request("GET", "/brown.flac").read(4), b"fLaC")
+
 
 class CliTest(unittest.TestCase):
-    def start(self) -> list[str]:
+    def start(self, lines: int = 1 + len(GENERATORS)) -> list[str]:
         """Start serve_noise.py on a free local port; what it prints before serving."""
         process = subprocess.Popen(
             [sys.executable, str(SCRIPT), "--bind", "127.0.0.1", "--port", "0"],
@@ -142,7 +203,13 @@ class CliTest(unittest.TestCase):
         self.addCleanup(process.terminate)
         assert process.stderr is not None
         self.addCleanup(process.stderr.close)
-        return [process.stderr.readline().strip() for _ in range(1 + len(GENERATORS))]
+        return [process.stderr.readline().strip() for _ in range(lines)]
+
+    def test_lists_the_control_routes_after_the_streams(self) -> None:
+        lines = self.start(lines=3 + len(GENERATORS))
+        port = lines[0].rsplit(":", 1)[1]
+        self.assertIn("Sonos speaker", lines[-2])
+        self.assertEqual(lines[-1], f"GET http://127.0.0.1:{port}/api/status?speaker=<speaker>")
 
     def test_says_where_it_listens_then_lists_the_streams(self) -> None:
         listening, *urls = self.start()
