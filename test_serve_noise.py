@@ -20,7 +20,14 @@ import numpy as np
 import pyflac  # type: ignore[import-untyped]
 
 from noise import GENERATORS, SAMPLE_RATE, BrownNoise, Samples
-from serve_noise import NoiseHandler, argument_parser, flac_stream, url_host
+from serve_noise import (
+    NoiseHandler,
+    argument_parser,
+    flac_stream,
+    lan_address,
+    server_url,
+    url_host,
+)
 
 SCRIPT = Path(__file__).with_name("serve_noise.py")
 
@@ -159,9 +166,9 @@ class SpeakerTest(ServerCase):
 
     def test_the_speaker_is_sent_to_the_address_the_server_listens_on(self) -> None:
         self.request("GET", "/api/status?speaker=Living%20Room").read()
-        self.machines.assert_called_once_with(
-            "Living Room", f"http://127.0.0.1:{self.server.server_port}"
-        )
+        (speaker, url_for), _ = self.machines.call_args
+        self.assertEqual(speaker, "Living Room")
+        self.assertEqual(url_for("192.168.1.50"), f"http://127.0.0.1:{self.server.server_port}")
 
     def test_status_is_json(self) -> None:
         response = self.request("GET", "/api/status?speaker=Bedroom")
@@ -257,7 +264,21 @@ class ArgumentsTest(unittest.TestCase):
     def test_urls_use_the_address_listened_on_otherwise(self) -> None:
         with mock.patch("serve_noise.lan_address") as lan_address:
             self.assertEqual(url_host("127.0.0.1"), "127.0.0.1")
+            self.assertEqual(url_host("127.0.0.1", towards="192.168.2.50"), "127.0.0.1")
         lan_address.assert_not_called()
+
+    def test_a_speaker_gets_the_address_on_the_network_that_leads_to_it(self) -> None:
+        addresses = {"192.168.1.50": "192.168.1.10", "192.168.2.50": "192.168.2.10"}
+        with mock.patch("serve_noise.lan_address", side_effect=addresses.get):
+            for speaker, url in (
+                ("192.168.1.50", "http://192.168.1.10:8000"),
+                ("192.168.2.50", "http://192.168.2.10:8000"),
+            ):
+                self.assertEqual(server_url("0.0.0.0", 8000, towards=speaker), url)
+
+    def test_the_address_that_leads_to_this_host_is_this_host(self) -> None:
+        # The one route every host has; nothing is sent to find it.
+        self.assertEqual(lan_address(towards="127.0.0.1"), "127.0.0.1")
 
 
 if __name__ == "__main__":

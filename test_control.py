@@ -14,12 +14,18 @@ from control import ROUTES, Machine, Reply, SpeakerNotFound
 from noise import GENERATORS
 
 SERVER = "http://192.168.1.10:8000"
+SPEAKER_ADDRESS = "192.168.1.50"
+
+
+def server_url(speaker: str) -> str:
+    return SERVER
 
 
 @mock.patch("sonos_play.find_speaker")
 class MachineTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.machine = Machine("Bedroom", SERVER)
+        self.server_url = mock.Mock(side_effect=server_url)
+        self.machine = Machine("Bedroom", self.server_url)
 
     def speaker_playing(
         self, find_speaker: mock.Mock, state: str, uri: str, position: str = "0:01:02"
@@ -50,6 +56,17 @@ class MachineTest(unittest.TestCase):
         self.machine.stop()
         find_speaker.return_value.play_from_queue.assert_not_called()
         find_speaker.return_value.stop.assert_not_called()
+
+    def test_the_streams_are_at_the_address_the_coordinator_can_reach(
+        self, find_speaker: mock.Mock
+    ) -> None:
+        find_speaker.return_value.group.coordinator.ip_address = SPEAKER_ADDRESS
+        self.speaker_playing(find_speaker, "PLAYING", f"{SERVER}/brown.flac")
+        self.machine.play("brown")
+        self.server_url.assert_called_once_with(SPEAKER_ADDRESS)
+        self.server_url.reset_mock()
+        self.machine.status()
+        self.server_url.assert_called_once_with(SPEAKER_ADDRESS)
 
     def test_stop_stops_a_speaker_playing_a_color(self, find_speaker: mock.Mock) -> None:
         self.speaker_playing(find_speaker, "PLAYING", f"{SERVER}/brown.flac")
@@ -118,7 +135,7 @@ class ControlTest(unittest.TestCase):
         self.machine.stop.return_value = {"playing": None}
 
     def control(self, method: str, path: str, query: str = "?speaker=Bedroom") -> Reply | None:
-        return control.control(SERVER, method, path + query)
+        return control.control(server_url, method, path + query)
 
     def test_the_speaker_is_the_one_in_the_query(self) -> None:
         for query, speaker in (
@@ -129,7 +146,7 @@ class ControlTest(unittest.TestCase):
         ):
             with self.subTest(query=query):
                 self.control("GET", "/api/status", query)
-                self.machines.assert_called_with(speaker, SERVER)
+                self.machines.assert_called_with(speaker, server_url)
 
     def test_without_exactly_one_speaker_is_a_bad_request(self) -> None:
         for query in ("", "?speaker=", "?room=Bedroom", "?speaker=Bedroom&speaker=Kitchen"):

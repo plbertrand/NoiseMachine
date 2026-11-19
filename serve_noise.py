@@ -26,6 +26,7 @@ from streams import STREAMS
 
 CHUNK_FRAMES = SAMPLE_RATE  # noise is generated a second at a time
 EVERY_ADDRESS = "0.0.0.0"
+ANYWHERE = "192.0.2.1"  # reserved for documentation: nothing is there
 
 
 def flac_stream(noise: Noise) -> Iterator[bytes]:
@@ -68,8 +69,10 @@ class NoiseHandler(BaseHTTPRequestHandler):
         """Answer a request to control a speaker; False if it is not one."""
         address = self.server.server_address
         assert isinstance(address, tuple)  # of an internet socket: (host, port)
-        streams_url = server_url(str(address[0]), int(address[1]))
-        reply = control.control(streams_url, method, self.path)
+        bind, port = str(address[0]), int(address[1])
+        reply = control.control(
+            lambda speaker: server_url(bind, port, towards=speaker), method, self.path
+        )
         if reply is None:
             return False
         body = json.dumps(reply.content).encode() + b"\n"
@@ -108,29 +111,33 @@ class NoiseHandler(BaseHTTPRequestHandler):
             pass  # the listener hung up, which is how every stream ends
 
 
-def lan_address() -> str:
-    """This host's address on the local network, to print URLs a speaker can use.
+def lan_address(towards: str = ANYWHERE) -> str:
+    """This host's address on the network that leads to the address towards.
 
-    Only for display, when listening on every address. A host on several
-    networks has several addresses; this is the one on its default route.
+    A host on several networks has several addresses, and a speaker can only
+    use the one on its own network. Towards anywhere, it is the address on
+    the default route.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         try:
             # Connecting a UDP socket sends nothing; it only picks the route.
-            probe.connect(("192.0.2.1", 9))
+            probe.connect((towards, 9))
             return str(probe.getsockname()[0])
         except OSError:
             return "127.0.0.1"
 
 
-def url_host(bind: str) -> str:
-    """The host to print in the stream URLs of a server listening on bind."""
-    return lan_address() if bind == EVERY_ADDRESS else bind
+def url_host(bind: str, towards: str = ANYWHERE) -> str:
+    """The host in the URLs of a server listening on bind, for a listener at towards.
+
+    A server told to listen on one address is at that address for everyone.
+    """
+    return lan_address(towards) if bind == EVERY_ADDRESS else bind
 
 
-def server_url(bind: str, port: int) -> str:
-    """Where a speaker finds a server listening on bind and port."""
-    return f"http://{url_host(bind)}:{port}"
+def server_url(bind: str, port: int, towards: str = ANYWHERE) -> str:
+    """Where a listener at towards finds a server listening on bind and port."""
+    return f"http://{url_host(bind, towards)}:{port}"
 
 
 def argument_parser() -> argparse.ArgumentParser:

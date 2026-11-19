@@ -22,6 +22,7 @@ import sonos_play
 import streams
 
 Status = dict[str, str | None]
+ServerUrl = Callable[[str], str]  # where the speaker at that IP address finds the streams
 
 PLAYING_STATES = ("PLAYING", "TRANSITIONING")
 SPEAKER = "speaker"  # the query parameter that says which speaker
@@ -34,9 +35,18 @@ class SpeakerNotFound(OSError):
 class Machine:
     """A Sonos speaker, and the server whose streams it is told to play."""
 
-    def __init__(self, speaker: str, server_url: str) -> None:
+    def __init__(self, speaker: str, server_url: ServerUrl) -> None:
         self.speaker = speaker
-        self.urls = {color: server_url + streams.stream_path(color) for color in GENERATORS}
+        self.server_url = server_url
+
+    def urls(self, coordinator: Any) -> dict[str, str]:
+        """The stream of each color, at the address coordinator can reach.
+
+        The coordinator is the speaker that fetches the stream, and a server
+        on several networks is at a different address on each.
+        """
+        server = self.server_url(coordinator.ip_address)
+        return {color: server + streams.stream_path(color) for color in GENERATORS}
 
     def coordinator(self) -> Any:
         """The speaker that takes the commands of the speaker's group.
@@ -49,7 +59,8 @@ class Machine:
         return speaker.group.coordinator
 
     def play(self, color: str) -> Status:
-        sonos_play.queue_streams(self.coordinator(), self.urls[color])
+        coordinator = self.coordinator()
+        sonos_play.queue_streams(coordinator, self.urls(coordinator)[color])
         return {"playing": color}
 
     def stop(self) -> Status:
@@ -70,7 +81,7 @@ class Machine:
     def _playing(self, coordinator: Any) -> Status:
         state = coordinator.get_current_transport_info()["current_transport_state"]
         track = coordinator.get_current_track_info()
-        colors = {url: color for color, url in self.urls.items()}
+        colors = {url: color for color, url in self.urls(coordinator).items()}
         color = colors.get(track["uri"]) if state in PLAYING_STATES else None
         return {"playing": color, "position": track["position"] if color else None}
 
@@ -95,11 +106,8 @@ class Reply(NamedTuple):
     allow: str | None = None  # the method to use instead, when the code is 405
 
 
-def control(server_url: str, method: str, url: str) -> Reply | None:
-    """Do what a request asks of a speaker; None if url is not one of ROUTES.
-
-    server_url is where the speaker will find the streams.
-    """
+def control(server_url: ServerUrl, method: str, url: str) -> Reply | None:
+    """Do what a request asks of a speaker; None if url is not one of ROUTES."""
     request = urlsplit(url)
     route = ROUTES.get(request.path)
     if route is None:
