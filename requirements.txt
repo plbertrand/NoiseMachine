@@ -1,3 +1,5 @@
+ifaddr
 numpy
 pyflac
 soco
+zeroconf

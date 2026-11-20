@@ -23,6 +23,7 @@ import pyflac  # type: ignore[import-untyped]
 
 import control
 import cover
+import mdns
 from noise import SAMPLE_RATE, Noise
 from streams import COVERS, STREAMS
 
@@ -186,10 +187,11 @@ def main() -> int:
             url = f"{server_url(args.bind, port)}{path}?{control.SPEAKER}=<speaker>"
             print(f"{method} {url}", file=sys.stderr)
         sys.stderr.flush()
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
+        with mdns.announced(args.bind, port):
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
     return 0
 
 
