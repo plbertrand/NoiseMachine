@@ -23,6 +23,7 @@ import pyflac  # type: ignore[import-untyped]
 
 import control
 import cover
+import mdns
 from noise import SAMPLE_RATE, Noise
 from streams import COVERS, STREAMS
 
@@ -176,7 +177,7 @@ def main() -> int:
         server = ThreadingHTTPServer((args.bind, args.port), NoiseHandler)
     except OSError as error:
         parser.error(f"cannot listen on {args.bind}:{args.port}: {error}")
-    with server:
+    with server, mdns.announced(args.bind, server.server_port) as name:
         port = server.server_port
         print(f"Listening on {args.bind}:{port}", file=sys.stderr)
         for path in STREAMS:
@@ -185,6 +186,8 @@ def main() -> int:
         for path, (method, _) in control.ROUTES.items():
             url = f"{server_url(args.bind, port)}{path}?{control.SPEAKER}=<speaker>"
             print(f"{method} {url}", file=sys.stderr)
+        if name:
+            print(f"Also at http://{name}:{port}, where .local names work", file=sys.stderr)
         sys.stderr.flush()
         try:
             server.serve_forever()
