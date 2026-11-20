@@ -31,7 +31,7 @@ RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
 FROM python:3.13-slim
 COPY --from=build /venv /venv
 WORKDIR /app
-COPY control.py cover.py noise.py serve_noise.py sonos_play.py streams.py ./
+COPY control.py cover.py mdns.py noise.py serve_noise.py sonos_play.py streams.py ./
 USER nobody
 EXPOSE 8000
 ENTRYPOINT ["/venv/bin/python", "serve_noise.py"]
