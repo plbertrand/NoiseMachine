@@ -1,0 +1,14 @@
+# The noise server on a Linux host, started again after a crash or a reboot.
+#
+#   docker compose up --build -d
+#   docker compose logs          the addresses to use
+#   docker compose down
+#
+# Host networking is required: the Dockerfile's header says why.
+
+services:
+  noisemachine:
+    build: .
+    image: noisemachine
+    network_mode: host
+    restart: unless-stopped
